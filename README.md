@@ -1,13 +1,21 @@
 # Hibernate 7+ Bytecode Enhancement — Exemples complets (Java & Kotlin)
 
-Projets Maven fonctionnels qui prouvent que le bytecode enhancement de
-[Hibernate ORM 7.x](https://hibernate.org/orm/releases/7.0/) fonctionne bien, avec le
+Projets Maven **fonctionnels** qui prouvent que le bytecode enhancement de
+[Hibernate ORM 7.x](https://hibernate.org/orm/releases/7.0/) marche bien, avec le
 nouveau plugin **`org.hibernate.orm:hibernate-maven-plugin`** (réécrit en 7.0).
 
-Deux modules indépendants :
+Quatre variantes, toutes validées à l'exécution :
 
-- [`java/`](./java) — entité POJO, champs privés, attribut lazy
-- [`kotlin/`](./kotlin) — entité Kotlin (pièges `open` + `var`)
+| Module | Langage | Styling | Config |
+|---|---|---|---|
+| [`java/`](./java) | Java | CLI (Main) | `persistence.xml` |
+| [`kotlin/`](./kotlin) | Kotlin | CLI (Main) | `persistence.xml` |
+| [`spring-boot-java/`](./spring-boot-java) | Java | **Spring Boot 4.1** | `application.properties`, **zéro XML** |
+| [`spring-boot-kotlin/`](./spring-boot-kotlin) | Kotlin | **Spring Boot 4.1** | `application.properties`, **zéro XML** |
+
+> 💡 **Pour démarrer vite**, prends les versions Spring Boot : pas de `persistence.xml`,
+> la config vit dans `src/main/resources/application.properties`, et Hibernate
+> 7.4 est géré nativement par Spring Boot 4.1 (aucune version à déclarer).
 
 ---
 
@@ -17,40 +25,41 @@ Deux modules indépendants :
 |---|---|---|
 | `Product` implémente `ManagedEntity` + `SelfDirtinessTracker` (enhancement injecté) | ✅ | ✅ |
 | Attribut `@Basic(fetch = LAZY)` chargé au premier accès | ✅ | ✅ |
-| Re-merge **sans modification** → **0 UPDATE** (dirty-tracking enhancement) | ✅ | ✅ |
+| Re-save **sans modification** → **0 UPDATE** (dirty-tracking enhancement) | ✅ | ✅ |
 | Mutation réelle → **1 UPDATE** | ✅ | ✅ |
 
 ## Pré-requis
 
-- **JDK 17+** (testé sous JDK 21)
+- **JDK 17+** (projets Spring Boot : JDK 21)
 - **Maven 3.8+**
 - Base H2 embarquée (aucune config requise)
 
-## Lancer
+## Lancer — version Spring Boot (recommandée)
 
 ```bash
-# Java
-cd java
-mvn package                       # compile + applique l'enhancement
-mvn exec:java -Dexec.mainClass=com.example.hib.Main
-
-# Kotlin
-cd kotlin
-mvn package
-mvn exec:java -Dexec.mainClass=com.example.hib.MainKt
+cd spring-boot-java          # ou spring-boot-kotlin
+mvn spring-boot:run
 ```
 
-La sortie attendue (les deux langages) :
+L'app démarre, exécute `EnhancementProbe` (un `CommandLineRunner`) puis reste en
+écoute. Les logs contiennent :
 
 ```
 == ...Product.class enhanced (implements SelfDirtinessTracker) == true
-== after accessing lazy description, length = NN
-== unchanged merge: entity UPDATE statements = 0  (expect 0)
-== changed name: entity UPDATE statements = 1  (expect 1)
-ALL CHECKS PASSED
+== lazy description AFTER access, length = NN
+== unchanged save: entity UPDATE = 0  (expect 0)
+== changed name: entity UPDATE = 1  (expect 1)
+ALL SPRING BOOT ... CHECKS PASSED
 ```
 
-Pour voir le SQL instrumenté : `hibernate.show_sql=true` est déjà actif dans `Main`.
+## Lancer — version CLI minimale
+
+```bash
+# Java
+cd java && mvn package && mvn exec:java -Dexec.mainClass=com.example.hib.Main
+# Kotlin
+cd kotlin && mvn package && mvn exec:java -Dexec.mainClass=com.example.hib.MainKt
+```
 
 ---
 
@@ -74,9 +83,9 @@ Le plugin a changé de coordonnées en 7.0 :
 ```
 
 > L'ancien `org.hibernate.orm.tooling:hibernate-enhance-maven-plugin` est remplacé.
-> ⚠️ Depuis **7.1.5**, `enableLazyInitialization` et `enableDirtyTracking` sont repassés
-> à `true` par défaut (une régression 7.0 les avait mis à `false`). Sur 7.0.x,
-> active-les explicitement.
+> ⚠️ Depuis **7.1.5**, `enableLazyInitialization` et `enableDirtyTracking` sont
+> repassés à `true` par défaut (une régression 7.0 les avait mis à `false`).
+> Sur 7.0.x, active-les explicitement.
 
 ### Options dépréciées en 7.1+
 
@@ -84,29 +93,36 @@ Le plugin a changé de coordonnées en 7.0 :
 - `enableAssociationManagement` (bidirectionnel auto) — gère les deux côtés à la main
 - l'enhancement runtime (`hibernate.enhancer.*`) — préférer l'enhancement au build
 
-### Kotlin : piège à connaître
+### Kotlin : pièges à connaître
 
-Les classes Kotlin sont **`final`** par défaut. L'enhancer ne peut pas tisser un
-interceptor dans une classe finale :
-
-```kotlin
-@Entity
-open class Product(          // <-- obligatoire : "open"
-    var name: String,        // <-- "var", pas "val"
-    // ...
-)
-```
+1. **Classe `open` + propriétés `var`** — les classes Kotlin sont `final` par défaut,
+   l'enhancer ne peut pas tisser dans une classe finale :
+   ```kotlin
+   @Entity
+   open class Product(          // <-- obligatoire : "open"
+       var name: String,        // <-- "var", pas "val"
+       var description: String?,
+   )
+   ```
+2. **Avec Spring, les `@Component`/`.run()` doivent être `open`** — Spring utilise
+   CGLIB pour le proxying (`@Transactional`), et ne peut pas sous-classer une classe finale :
+   ```kotlin
+   @Component
+   open class EnhancementProbe(...) : CommandLineRunner { ... }
+   ```
 
 ---
 
 ## Versions
 
+- Spring Boot **4.1.1** (gère Hibernate 7.4 nativement — cf. [matrix](https://hibernate.org/community/integrations/))
 - Hibernate ORM **7.4.9.Final** (dernière 7.x stable)
 - H2 **2.3.232**
-- Kotlin **2.1.20**, `maven.compiler.release=17`
+- Kotlin **2.1.20**, `java.version=21`
 
 ## Références
 
 - [Hibernate Migration Guide 7.0](https://docs.hibernate.org/orm/7.0/migration-guide/) — réécriture du plugin Maven
 - [Hibernate Migration Guide 7.1](https://docs.hibernate.org/orm/7.1/migration-guide/) — options dépréciées, défauts re-`true`
 - [User Guide — Bytecode Enhancement](https://docs.hibernate.org/orm/7.0/userguide/html_single/) — capabilities (lazy, dirty-tracking)
+- [Hibernate / Spring Boot instabilité matrix](https://hibernate.org/community/integrations/)
